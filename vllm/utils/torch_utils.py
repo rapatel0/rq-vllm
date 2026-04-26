@@ -41,6 +41,11 @@ STR_DTYPE_TO_TORCH_DTYPE = {
     "int8": torch.int8,
     "fp8_inc": torch.float8_e4m3fn,
     "fp8_ds_mla": torch.uint8,
+    # rq-models RotorQuant KV cache. Phase 1: torch.float16 storage so the
+    # dtype is accepted but pack/unpack are passthrough (output bit-identical
+    # to --kv-cache-dtype float16). Phase 2 will switch to torch.uint8 for the
+    # 3-bpe packed layout once the real kernels land.
+    "rotorquant_planar3": torch.float16,
 }
 
 TORCH_DTYPE_TO_NUMPY_DTYPE = {

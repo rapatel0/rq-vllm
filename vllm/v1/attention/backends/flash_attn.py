@@ -66,6 +66,10 @@ class FlashAttentionBackend(AttentionBackend):
         "auto",
         "float16",
         "bfloat16",
+        # rq-models RotorQuant. Phase 1 (current): passthrough fp16 storage,
+        # so output is bit-identical to "float16". Phase 2 wires the real
+        # 3-bpe planar3 pack/unpack kernels.
+        "rotorquant_planar3",
     ]
 
     @staticmethod
@@ -167,6 +171,10 @@ class FlashAttentionBackend(AttentionBackend):
             return True
         if kv_cache_dtype.startswith("fp8"):
             return flash_attn_supports_fp8()
+        if kv_cache_dtype.startswith("rotorquant_"):
+            # rq-models Phase 1: passthrough fp16 storage. Phase 2 may
+            # require flash_attn version checks once real kernels land.
+            return True
         return kv_cache_dtype in ["auto", "float16", "bfloat16"]
 
     @classmethod

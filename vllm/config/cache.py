@@ -20,6 +20,12 @@ CacheDType = Literal[
     "fp8_e5m2",
     "fp8_inc",
     "fp8_ds_mla",
+    # rq-models RotorQuant KV cache compression. See ROTORQUANT.md.
+    # Phase 1 (current): the dtype is accepted by the CLI but storage
+    # falls back to fp16 (passthrough). Phase 2 swaps in the real 3-bpe
+    # planar rotation + Lloyd-Max codebook kernels at
+    # vllm/csrc/attention/rotorquant/planar3_kv.cu.
+    "rotorquant_planar3",
 ]
 MambaDType = Literal["auto", "float32", "float16"]
 MambaCacheMode = Literal["all", "align", "none"]
