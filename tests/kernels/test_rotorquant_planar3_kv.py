@@ -101,29 +101,51 @@ def test_round_trip_l2_norm(n_blocks: int, scale: float) -> None:
 
 
 @pytest.mark.parametrize("n_blocks", [1, 8, 64])
-def test_round_trip_per_element_relerr(n_blocks: int) -> None:
-    """Per-element relative error is within 5% (3-bit Lloyd-Max codebook
-    bound). The 8-level codebook has spacing ~0.05 in the unit-norm interior,
-    so post-rotation values get 1 of 8 reconstructions — max per-element
-    quantization error ~0.025 * grp_norm. Allow 5e-2 relative for slack."""
+def test_round_trip_cosine_similarity(n_blocks: int) -> None:
+    """Per-block cosine similarity is the right metric for a rotation +
+    Lloyd-Max scheme. Per-element relative error is meaningless near zero
+    (any value smaller than the smallest centroid 0.0215 maps to a
+    centroid, so a src=0.001 with out=0.0215 has 21× rel err — but the
+    block-level signal direction is preserved). 3-bit planar3 with full
+    Givens rotation should give cos_sim > 0.95 per block on Gaussian input.
+    """
     src = _make_input(n_blocks)
     packed = torch.empty(n_blocks * BLOCK_BYTES, device="cuda", dtype=torch.uint8)
     out = torch.empty(n_blocks * QK_PLANAR3, device="cuda", dtype=torch.float16)
     rotorquant_planar3_pack(src, packed, n_blocks)
     rotorquant_planar3_unpack(packed, out, n_blocks)
 
-    src_f = src.float()
-    out_f = out.float()
-    diff = (src_f - out_f).abs()
-    src_max = src_f.abs().max().item()
-    rel = diff.max().item() / max(src_max, 1e-6)
-    # 3-bit per-element rel err can spike on individual outliers; check that
-    # 95% of values are within 5e-2.
-    sorted_rel = torch.sort(diff / src_f.abs().clamp(min=1e-3))[0]
-    p95 = sorted_rel[int(0.95 * len(sorted_rel))].item()
-    assert p95 < 0.10, (
-        f"Per-element p95 rel err too large: {p95}. "
-        f"Max abs err = {diff.max().item()}, src_max = {src_max}.")
+    src_blocks = src.view(n_blocks, QK_PLANAR3).float()
+    out_blocks = out.view(n_blocks, QK_PLANAR3).float()
+    cos = torch.nn.functional.cosine_similarity(src_blocks, out_blocks, dim=1)
+    min_cos = cos.min().item()
+    assert min_cos > 0.95, (
+        f"Per-block cosine similarity dropped below 0.95: min={min_cos}. "
+        f"This indicates the rotation or codebook decode is broken.")
+
+
+@pytest.mark.parametrize("n_blocks", [1, 8, 64])
+def test_round_trip_max_normalized_err(n_blocks: int) -> None:
+    """Per-element absolute error normalized by per-block max magnitude.
+    The 3-bit codebook has 8 levels in [-0.19, +0.19] post-normalization,
+    so per-element error can be up to ~0.025 in normalized units. After
+    multiplying back by the block norm, max normalized err should stay
+    well below 0.5 (worst-case crossing two codebook bins for an outlier).
+    """
+    src = _make_input(n_blocks)
+    packed = torch.empty(n_blocks * BLOCK_BYTES, device="cuda", dtype=torch.uint8)
+    out = torch.empty(n_blocks * QK_PLANAR3, device="cuda", dtype=torch.float16)
+    rotorquant_planar3_pack(src, packed, n_blocks)
+    rotorquant_planar3_unpack(packed, out, n_blocks)
+
+    src_blocks = src.view(n_blocks, QK_PLANAR3).float()
+    out_blocks = out.view(n_blocks, QK_PLANAR3).float()
+    block_max = src_blocks.abs().max(dim=1, keepdim=True).values
+    norm_err = (src_blocks - out_blocks).abs() / block_max.clamp(min=1e-6)
+    p99 = torch.sort(norm_err.flatten())[0][int(0.99 * norm_err.numel())].item()
+    assert p99 < 0.30, (
+        f"Per-element 99th-percentile error normalized by block max = {p99}, "
+        f"expected < 0.30 for planar3 round-trip.")
 
 
 def test_zero_input_does_not_nan() -> None:
